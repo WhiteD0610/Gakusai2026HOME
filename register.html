@@ -511,7 +511,7 @@ function renderSheet() {
       $('#sheetBody').innerHTML =
         `<p class="cap-line" style="margin:0 4px 12px">${esc(itemsText(o))}${cooked ? '（調理済み）' : '（調理前）'}・取消理由を選んでください。</p>
          <div class="list">
-           <button class="row pick" data-cat="商品不良"><span class="n">商品不良</span><span class="sub2">${cooked ? '廃棄する' : '材料は戻ります'}</span></button>
+           <button class="row pick" data-cat="商品不良"><span class="n">商品不良</span><span class="sub2">${cooked ? '廃棄する' : '材料を戻さないでください'}</span></button>
            <button class="row pick" data-cat="お客様都合キャンセル"><span class="n">お客様都合キャンセル</span><span class="sub2">${cooked ? '余剰在庫に戻す' : '材料は戻ります'}</span></button>
            <button class="row pick" data-cat="その他"><span class="n">その他</span><span class="sub2">担当者名と詳細を入力</span></button>
          </div>`;
