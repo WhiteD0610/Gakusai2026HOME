@@ -43,6 +43,9 @@ body { margin: 0; font-family: var(--font); font-size: 17px; line-height: 1.47; 
 .nav-in { max-width: 760px; margin: 0 auto; padding: var(--sp-3) var(--sp-4) var(--sp-3); }
 .nav-top { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-3); }
 .nav h1 { margin: 0; font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.lock-btn { width: 40px; height: 40px; display: grid; place-items: center; border: 0; background: none;
+  color: var(--label-2); cursor: pointer; margin-right: -8px; }
+.lock-btn:active { opacity: 0.4; }
 .home-btn { width: 40px; height: 40px; display: grid; place-items: center; border-radius: var(--r-md);
   background: var(--fill); color: var(--label-2); flex: none; text-decoration: none; }
 .home-btn:active { opacity: 0.4; }
@@ -194,7 +197,12 @@ td.z { color: var(--label-3); }
           <a class="home-btn" href="index.html" aria-label="メニュー"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 5l8 6.5"/><path d="M6.5 10.5V19h11v-8.5"/></svg></a>
           <h1 id="title">概要</h1>
         </div>
-        <div class="live" id="live"><i></i><span>読み込み中</span></div>
+        <div style="display:flex;align-items:center;gap:2px">
+          <div class="live" id="live"><i></i><span>読み込み中</span></div>
+          <button class="lock-btn" id="lockBtn" aria-label="ロック">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+          </button>
+        </div>
       </div>
       <div class="seg-wrap" id="rangeWrap"><div class="seg" id="range"></div></div>
     </div>
@@ -251,7 +259,14 @@ const hms = ts => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad
 const clone = o => JSON.parse(JSON.stringify(o));
 const newId = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 
-let key = localStorage.getItem('churro_admin_key') || '';
+const LOCK_MS = 10 * 60 * 1000;                 // 10分操作がなければ自動ロック
+function touch() { try { localStorage.setItem('churro_admin_seen', String(Date.now())); } catch (e) {} }
+let key = (() => {
+  const k = localStorage.getItem('churro_admin_key') || '';
+  const seen = Number(localStorage.getItem('churro_admin_seen') || 0);
+  if (k && Date.now() - seen > LOCK_MS) { localStorage.removeItem('churro_admin_key'); return ''; }
+  return k;
+})();
 let data = null;           // { config, orders:[{id,ticket,ts,items:[{productId,name,price,qty}],status}] }
 let tab = (() => {                                  // メニューからの指定タブで開く
   const t = new URLSearchParams(location.search).get('tab');
@@ -303,11 +318,14 @@ function login() {
   key = $('#pass').value.trim();
   if (!key) return;
   localStorage.setItem('churro_admin_key', key);
+  touch();
   $('#loginErr').textContent = '';
   fetchAll(true);
 }
 function logout(msg) {
-  key = ''; localStorage.removeItem('churro_admin_key');
+  key = ''; localStorage.removeItem('churro_admin_key'); localStorage.removeItem('churro_admin_seen');
+  data = null; dirty = false; draft = null;
+  $('#pass').value = '';
   $('#appView').hidden = true; $('#loginView').hidden = false;
   $('#loginErr').textContent = msg || '';
 }
@@ -708,6 +726,19 @@ $('#loginBtn').addEventListener('click', login);
 $('#pass').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => { tab = b.dataset.tab; window.scrollTo(0, 0); render(true); }));
 $('#range').addEventListener('click', e => { const b = e.target.closest('[data-range]'); if (b) { range = b.dataset.range; render(true); } });
+$('#lockBtn').addEventListener('click', () => logout(''));
+['click', 'keydown', 'touchstart'].forEach(ev => document.addEventListener(ev, touch, { passive: true }));
+setInterval(() => {                                 // 放置で自動ロック
+  if (!key) return;
+  const seen = Number(localStorage.getItem('churro_admin_seen') || 0);
+  if (Date.now() - seen > LOCK_MS) logout('しばらく操作がなかったためロックしました');
+}, 30000);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  const seen = Number(localStorage.getItem('churro_admin_seen') || 0);
+  if (key && Date.now() - seen > LOCK_MS) logout('しばらく操作がなかったためロックしました');
+});
+
 $('#cfCancel').addEventListener('click', closeConfirm);
 $('#adjCancel').addEventListener('click', () => openAdjust(false));
 $('#adjSet').addEventListener('click', () => adjustStock(Math.max(0, Math.round(Number($('#adjPcs').value) || 0))));
@@ -795,7 +826,7 @@ $('#main').addEventListener('click', e => {
 });
 
 // ---------- 起動 ----------
-if (key) { fetchAll(true); } else { $('#loginView').hidden = false; if (!GAS_URL) $('#loginErr').textContent = 'admin.html 内の GAS_URL を設定してください'; }
+if (key) { touch(); fetchAll(true); } else { $('#loginView').hidden = false; if (!GAS_URL) $('#loginErr').textContent = 'admin.html 内の GAS_URL を設定してください'; }
 setInterval(() => { if (key && data && !document.hidden) fetchAll(false); }, 5000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && key && data) fetchAll(false); });
 </script>
