@@ -118,6 +118,7 @@ input, textarea { -webkit-user-select: text; user-select: text; font: inherit; c
 .badge.ok { background: var(--green); } .badge.ng { background: var(--red); }
 .h-sub { font-size: 13px; color: var(--label-2); font-variant-numeric: tabular-nums; }
 .h-act { display: flex; gap: var(--sp-4); }
+.pend { font-size: 11px; font-weight: 600; color: var(--orange); margin-left: 6px; }
 .empty { padding: var(--sp-4); font-size: 15px; color: var(--label-2); }
 .cap { font-size: 13px; color: var(--label-2); margin: var(--sp-2) var(--sp-3) 0; }
 
@@ -186,7 +187,7 @@ input, textarea { -webkit-user-select: text; user-select: text; font: inherit; c
   </div>
   <button class="btn btn-filled" id="recBtn" disabled>この点検を記録</button>
 
-  <p class="head-lb"><span>点検履歴（この端末に保存）</span><button class="mini" id="csvBtn">CSV書き出し</button></p>
+  <p class="head-lb"><span id="histLb">点検履歴</span><button class="mini" id="csvBtn">CSV書き出し</button></p>
   <div class="list" id="history"></div>
   <p class="cap">販売アプリの売上は「注文送信済み・取消を除く」金額です。数え始める前に受付を一旦止め、数え終わった直後に再取得すると正確です。</p>
 </main>
@@ -275,12 +276,15 @@ function calc() {
   return { cash, expected, diff };
 }
 function renderHistory() {
-  const el = $('#history');
+  const el = $('#history'), un = st.history.filter(x => !x.synced).length;
+  $('#histLb').textContent = '点検履歴（' + (!GAS_URL ? 'この端末に保存'
+    : syncState === 'err' ? '通信エラー' + (un ? '・未送信 ' + un + '件' : '')
+    : syncAt ? '全端末で共有・更新 ' + hm(syncAt) : '全端末で共有・読み込み中') + '）';
   if (!st.history.length) { el.innerHTML = '<div class="empty">まだ記録がありません</div>'; return; }
   el.innerHTML = st.history.map(h => `
     <div class="h">
       <div class="h-top">
-        <span class="h-time">${md(h.ts)} ${hm(h.ts)}<small>${esc(h.staff || '')}</small></span>
+        <span class="h-time">${md(h.ts)} ${hm(h.ts)}<small>${esc(h.staff || '')}</small>${GAS_URL && !h.synced ? '<span class="pend">未送信</span>' : ''}</span>
         <span class="badge ${h.diff === 0 ? 'ok' : 'ng'}">${h.diff === 0 ? '一致' : signed(h.diff)}</span>
       </div>
       <div class="h-sub">現金 ${yen(h.cash)} ／ 売上 ${yen(h.sales)} ／ 準備金 ${yen(h.float)}${h.out ? ' ／ 出 ' + yen(h.out) : ''}</div>
@@ -322,6 +326,42 @@ function applyRemote() {
   $('#sales').value = a ? a.toLocaleString('ja-JP') : '';
   save(); calc();
 }
+
+// ---------- 履歴の共有（GAS のスプレッドシートに保存） ----------
+let syncState = 'idle', syncAt = 0, syncing = false;
+async function post(body) {
+  // text/plain で送る（GAS はプリフライト付きのリクエストを受けられないため）
+  const r = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
+  const j = await r.json(); if (!j || !j.ok) throw new Error('ng'); return j;
+}
+// サーバから来た値は型を整えてから使う
+function normItem(o) {
+  if (!o || typeof o !== 'object' || !/^[A-Za-z0-9]{6,40}$/.test(String(o.id))) return null;
+  const num = v => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
+  const counts = {}, c = o.counts && typeof o.counts === 'object' ? o.counts : {};
+  DENOMS.forEach(d => { const n = num(c[d.v]); if (n > 0) counts[d.v] = n; });
+  return { id: String(o.id), ts: num(o.ts), counts, cash: num(o.cash), float: num(o.float), out: num(o.out), sales: num(o.sales),
+    scope: o.scope === 'total' ? 'total' : 'today', src: o.src === 'manual' ? 'manual' : 'auto', expected: num(o.expected), diff: num(o.diff),
+    staff: String(o.staff || '').slice(0, 20), memo: String(o.memo || '').slice(0, 100), synced: true };
+}
+async function syncHistory() {
+  if (!GAS_URL || syncing) return;
+  syncing = true;
+  try {
+    // 1) この端末にだけある記録を先に送る（古い順）
+    for (const h of st.history.filter(x => !x.synced).reverse()) { await post({ action: 'tenkenAdd', item: h }); h.synced = true; }
+    // 2) 全端末分の一覧を受け取る
+    const r = await fetch(GAS_URL + '?action=tenken&t=' + Date.now());
+    const j = await r.json();
+    if (!j || !j.ok || !Array.isArray(j.items)) throw new Error('bad response');
+    const items = j.items.map(normItem).filter(Boolean), ids = new Set(items.map(x => x.id));
+    const pending = st.history.filter(x => !x.synced && !ids.has(x.id));   // 同期中に増えた分は残す
+    st.history = pending.concat(items).sort((a, b) => b.ts - a.ts);
+    syncState = 'ok'; syncAt = Date.now();
+  } catch (e) { syncState = 'err'; }
+  syncing = false; save(); renderHistory();
+}
+const newId = () => { const a = new Uint32Array(3); crypto.getRandomValues(a); return Array.from(a, x => x.toString(36)).join(''); };
 
 // ---------- 操作 ----------
 let toastT = 0;
@@ -370,17 +410,24 @@ $('#clearBtn').addEventListener('click', e => twoStep(e.currentTarget, () => { s
 
 $('#recBtn').addEventListener('click', () => {
   const c = calc(); if (c.cash === 0) return;
-  st.history.unshift({ id: Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36), ts: Date.now(),
+  st.history.unshift({ id: newId(), ts: Date.now(), synced: false,
     counts: Object.assign({}, st.counts), cash: c.cash, float: st.float, out: st.out, sales: st.sales,
     scope: st.scope, src: st.salesSrc, expected: c.expected, diff: c.diff, staff: st.staff.trim(), memo: st.memo.trim() });
   if (st.history.length > 300) st.history.length = 300;
   st.counts = {}; st.memo = ''; save(); fillInputs(); calc(); renderHistory();
   toast('記録しました'); $('#history').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  syncHistory();
 });
 $('#history').addEventListener('click', e => {
   const c = e.target.closest('[data-copy]'), d = e.target.closest('[data-del]');
   if (c) { const h = st.history.find(x => x.id === c.dataset.copy); if (h) copyText(report(h)); }
-  if (d) twoStep(d, () => { st.history = st.history.filter(x => x.id !== d.dataset.del); save(); renderHistory(); });
+  if (d) twoStep(d, async () => {
+    const id = d.dataset.del, h = st.history.find(x => x.id === id); if (!h) return;
+    if (GAS_URL && h.synced) {     // 共有済みの記録は全端末から消す（シート上は「deleted」の印が残る）
+      try { await post({ action: 'tenkenDel', id }); } catch (e) { toast('削除できませんでした（通信エラー）'); return; }
+    }
+    st.history = st.history.filter(x => x.id !== id); save(); renderHistory();
+  });
 });
 $('#csvBtn').addEventListener('click', () => {
   if (!st.history.length) { toast('記録がありません'); return; }
@@ -400,6 +447,9 @@ $('#csvBtn').addEventListener('click', () => {
 
 buildDenoms(); fillInputs(); calc(); renderHistory();
 fetchSales(false);
+syncHistory();
+setInterval(() => { if (!document.hidden) syncHistory(); }, 20000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncHistory(); });
 </script>
 </body>
 </html>
