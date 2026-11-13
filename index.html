@@ -39,7 +39,6 @@ h1 { margin: 0; font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line
 header p { margin: var(--sp-2) 0 0; font-size: 15px; color: var(--label-2); }
 
 .menu { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-3); }
-@media (min-width: 720px) { .menu { grid-template-columns: repeat(4, 1fr); } }
 .tile { aspect-ratio: 1 / 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: var(--sp-3); padding: var(--sp-4); border-radius: var(--r-xl); background: var(--surface);
   box-shadow: var(--shadow); color: var(--label); text-decoration: none; text-align: center;
@@ -78,24 +77,6 @@ footer { margin-top: var(--sp-8); font-size: 13px; color: var(--label-3); text-a
       </span>
       <span class="tx"><span class="nm">キッチン</span><span class="ds">オーダー・調理完了</span></span>
     </a>
-
-    <a class="tile adm" href="admin.html">
-      <span class="ico">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5" stroke-dasharray="2.6 2.2"/></svg>
-      </span>
-      <span class="tx"><span class="nm">管理</span><span class="ds">粗利・在庫・設定</span></span>
-    </a>
-
-    <a class="tile sok" href="sokuho.html">
-      <span class="ico">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="20"/><polyline points="5,15 10,10 13.5,13 19,6"/><polyline points="19,10 19,6 15,6"/></svg>
-      </span>
-      <span class="tx"><span class="nm">売上速報</span><span class="ds">売上金額・販売個数</span></span>
-    </a>
-
-  <a class="tile" href="Tenken.html">
-  <span class="nm">定時点検</span><span class="ds">現金と売上の照合</span>
-  </a>
   </nav>
 
   <footer>各画面の左上のアイコンでこのメニューに戻れます</footer>
