@@ -268,6 +268,20 @@ body {
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxPALiGXxYTYIFeYSu-rxp0tUIAB3Cdlr367EIkegSQUBscC3j20GNnxwiaiwWgaEgb/exec';
 // ================================================================
 
+// ---------- スタッフ認証（ログインはホーム index.html で行う） ----------
+const SK = { key: 'churro_staff_key', day: 'churro_staff_day' };
+const todayStr = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); };
+let staffKey = '';
+try { if (localStorage.getItem(SK.day) === todayStr()) staffKey = localStorage.getItem(SK.key) || ''; } catch (e) {}
+if (!staffKey) location.replace('index.html');          // 未ログイン・日付が変わった → ホームへ
+/** サーバが認証エラーを返したとき：資格情報を消してホームへ（通信エラーでは呼ばない） */
+function authFail() {
+  staffKey = '';
+  try { localStorage.removeItem(SK.key); localStorage.removeItem(SK.day); } catch (e) {}
+  location.replace('index.html');
+}
+const keyQ = () => '&key=' + encodeURIComponent(staffKey);
+
 const K = { cfg: 'churro_cfg_v2', orders: 'churro_orders_v2', queue: 'churro_queue_v2',
             ticket: 'churro_ticket_v2', sound: 'churro_reg_sound' };
 const $ = s => document.querySelector(s);
@@ -644,9 +658,14 @@ function scheduleFlush(ms) { clearTimeout(flushTimer); flushTimer = setTimeout(f
 
 /** タイムアウト付き fetch（電波が悪いと fetch が何分も返らず、その間ずっと送信が止まるのを防ぐ） */
 async function fetchJSON(url, opt, ms) {
+  if (!staffKey) throw new Error('noauth');
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), ms);
-  try { const r = await fetch(url, Object.assign({ signal: ctl.signal }, opt)); return await r.json(); }
+  try {
+    const r = await fetch(url, Object.assign({ signal: ctl.signal }, opt)); const j = await r.json();
+    if (j && j.error === 'auth') { authFail(); throw new Error('auth'); }
+    return j;
+  }
   finally { clearTimeout(t); }
 }
 
@@ -658,7 +677,7 @@ async function flush() {
   try {
     const j = await fetchJSON(GAS_URL, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'sync', events: batch })
+      body: JSON.stringify({ action: 'sync', key: staffKey, events: batch })
     }, 15000);
     if (!j.ok) throw new Error(j.error || 'error');
     const sent = new Set(batch.map(e => e.eid));
@@ -694,7 +713,7 @@ async function flush() {
 async function fetchConfig() {
   if (!GAS_URL) { renderStatus(); return; }
   try {
-    const j = await fetchJSON(GAS_URL + '?action=config&t=' + Date.now(), {}, 15000);
+    const j = await fetchJSON(GAS_URL + '?action=config' + keyQ() + '&t=' + Date.now(), {}, 15000);
     if (!j.ok) throw new Error(j.error);
     applyReset(j.config.resetAt || 0);
     cfg = j.config; store(K.cfg, cfg);
@@ -714,7 +733,7 @@ async function fetchOrders(full) {
   const t0 = Date.now();
   try {
     if (full) rev = '';
-    const j = await fetchJSON(GAS_URL + '?action=orders' + (rev ? '&since=' + encodeURIComponent(rev) : '') + '&t=' + t0, {}, 15000);
+    const j = await fetchJSON(GAS_URL + '?action=orders' + keyQ() + (rev ? '&since=' + encodeURIComponent(rev) : '') + '&t=' + t0, {}, 15000);
     if (!j.ok) throw new Error(j.error);
     online = true;
     if (j.unchanged) { rev = j.rev; return; }

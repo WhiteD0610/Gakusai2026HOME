@@ -171,6 +171,20 @@ body { margin: 0; font-family: var(--font); font-size: 17px; line-height: 1.47; 
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxPALiGXxYTYIFeYSu-rxp0tUIAB3Cdlr367EIkegSQUBscC3j20GNnxwiaiwWgaEgb/exec';
 // ================================================================
 
+// ---------- スタッフ認証（ログインはホーム index.html で行う） ----------
+const SK = { key: 'churro_staff_key', day: 'churro_staff_day' };
+const todayStr = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); };
+let staffKey = '';
+try { if (localStorage.getItem(SK.day) === todayStr()) staffKey = localStorage.getItem(SK.key) || ''; } catch (e) {}
+if (!staffKey) location.replace('index.html');          // 未ログイン・日付が変わった → ホームへ
+/** サーバが認証エラーを返したとき：資格情報を消してホームへ（通信エラーでは呼ばない） */
+function authFail() {
+  staffKey = '';
+  try { localStorage.removeItem(SK.key); localStorage.removeItem(SK.day); } catch (e) {}
+  location.replace('index.html');
+}
+const keyQ = () => '&key=' + encodeURIComponent(staffKey);
+
 const K = { sound: 'churro_kitchen_sound', queue: 'churro_kitchen_queue' };
 const $ = s => document.querySelector(s);
 const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
@@ -216,9 +230,14 @@ function mark(id, ready) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 /** タイムアウト付き fetch（電波が悪いと fetch が何分も返らず、後続の通信が全部止まるのを防ぐ） */
 async function fetchJSON(url, opt, ms, ctl) {
+  if (!staffKey) throw new Error('noauth');
   ctl = ctl || new AbortController();
   const t = setTimeout(() => ctl.abort(), ms);
-  try { const r = await fetch(url, Object.assign({ signal: ctl.signal }, opt)); return await r.json(); }
+  try {
+    const r = await fetch(url, Object.assign({ signal: ctl.signal }, opt)); const j = await r.json();
+    if (j && j.error === 'auth') { authFail(); throw new Error('auth'); }
+    return j;
+  }
   finally { clearTimeout(t); }
 }
 
@@ -230,7 +249,7 @@ async function flush() {
   try {
     const j = await fetchJSON(GAS_URL, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'sync', events: batch })
+      body: JSON.stringify({ action: 'sync', key: staffKey, events: batch })
     }, 15000);
     if (!j.ok) throw new Error(j.error || 'error');
     const sent = new Set(batch.map(e => e.eid));
@@ -269,7 +288,7 @@ function stopPoll() { pollGen++; dropPoll(); }
 async function fetchOrders(ctl) {
   if (!GAS_URL) return 'err';
   try {
-    const url = GAS_URL + '?action=orders' + (rev ? '&since=' + encodeURIComponent(rev) + '&wait=1' : '') + '&t=' + Date.now();
+    const url = GAS_URL + '?action=orders' + keyQ() + (rev ? '&since=' + encodeURIComponent(rev) + '&wait=1' : '') + '&t=' + Date.now();
     const j = await fetchJSON(url, {}, 35000, ctl);
     if (!j.ok) throw new Error(j.error);
     connOk = true; lastOk = Date.now();

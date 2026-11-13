@@ -6,6 +6,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="チュロス">
 <title>チュロス販売システム</title>
+<script>
+// ===== ここにGASのWebアプリURL（/exec で終わるもの）を貼る =====
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbxPALiGXxYTYIFeYSu-rxp0tUIAB3Cdlr367EIkegSQUBscC3j20GNnxwiaiwWgaEgb/exec';
+// ================================================================
+</script>
 <style>
 :root {
   --bg: #F2F2F7; --surface: #FFFFFF;
@@ -29,6 +34,7 @@
   }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
 body { margin: 0; font-family: var(--font); font-size: 17px; line-height: 1.47; color: var(--label);
   background: var(--bg); -webkit-font-smoothing: antialiased; -webkit-user-select: none; user-select: none;
   touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
@@ -54,15 +60,57 @@ header p { margin: var(--sp-2) 0 0; font-size: 15px; color: var(--label-2); }
 .tile.kit .ico { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); }
 .tile.adm .ico { background: color-mix(in srgb, var(--orange) 18%, transparent); color: var(--orange); }
 footer { margin-top: var(--sp-8); font-size: 13px; color: var(--label-3); text-align: center; }
+
+/* ログイン */
+.login { display: grid; gap: var(--sp-3); }
+.panel { background: var(--surface); border-radius: var(--r-xl); box-shadow: var(--shadow); padding: var(--sp-6) var(--sp-4); }
+.panel h2 { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.panel p { margin: 0 0 var(--sp-4); font-size: 13px; color: var(--label-2); }
+.btn { display: block; width: 100%; min-height: 52px; border: 0; border-radius: var(--r-lg); font: inherit; font-weight: 600; cursor: pointer; }
+.btn:active { opacity: 0.6; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn-filled { background: var(--accent); color: #fff; }
+.btn-tinted { background: var(--fill); color: var(--accent); }
+.btn-plain { background: none; color: var(--accent); min-height: 44px; }
+.field { width: 100%; min-height: 52px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-lg); background: var(--fill);
+  font: inherit; font-size: 22px; letter-spacing: 0.3em; text-align: center; color: var(--label); margin-bottom: var(--sp-3);
+  -webkit-user-select: text; user-select: text; }
+.field:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.msg { min-height: 20px; font-size: 13px; color: var(--red); margin: var(--sp-2) 0 0; text-align: center; }
+.msg.info { color: var(--label-2); }
+#reader { width: 100%; border-radius: var(--r-lg); overflow: hidden; background: #000; margin-bottom: var(--sp-3); }
+#reader video { display: block; width: 100% !important; }
+.lock-row { margin-top: var(--sp-6); }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>チュロス販売</h1>
-    <p>使う画面を選んでください</p>
+    <p id="lead">確認中…</p>
   </header>
 
+  <!-- ログイン（未ログイン時だけ表示） -->
+  <section class="login" id="loginView" hidden>
+    <div class="panel">
+      <h2>QRコードでログイン</h2>
+      <p>管理者の端末に表示された入場QRを読み取ります。</p>
+      <div id="reader" hidden></div>
+      <button class="btn btn-filled" id="qrBtn">カメラでQRを読み取る</button>
+      <button class="btn btn-plain" id="qrStop" hidden>読み取りをやめる</button>
+      <div class="msg" id="qrMsg"></div>
+    </div>
+    <div class="panel">
+      <h2>スタッフキーでログイン</h2>
+      <p>QRが使えないときの予備です。6桁の数字を入力します。</p>
+      <input class="field" id="skey" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" aria-label="スタッフキー">
+      <button class="btn btn-tinted" id="skeyBtn">確認</button>
+      <div class="msg" id="skeyMsg"></div>
+    </div>
+  </section>
+
+  <!-- メニュー（ログイン中だけ表示） -->
+  <div id="menuView" hidden>
   <nav class="menu">
     <a class="tile reg" href="register.html">
       <span class="ico">
@@ -79,7 +127,116 @@ footer { margin-top: var(--sp-8); font-size: 13px; color: var(--label-3); text-a
     </a>
   </nav>
 
-  <footer>各画面の左上のアイコンでこのメニューに戻れます</footer>
+    <div class="lock-row"><button class="btn btn-tinted" id="lockBtn">ロックする</button></div>
+    <footer>各画面の左上のアイコンでこのメニューに戻れます</footer>
+  </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous" defer></script>
+<script>
+const SK = { key: 'churro_staff_key', day: 'churro_staff_day' };
+const $ = s => document.querySelector(s);
+const todayStr = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); };
+const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
+function saveCred(v) { try { localStorage.setItem(SK.key, v); localStorage.setItem(SK.day, todayStr()); } catch (e) {} }
+function clearCred() { try { localStorage.removeItem(SK.key); localStorage.removeItem(SK.day); } catch (e) {} }
+
+async function fetchJSON(url, opt, ms) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms || 15000);
+  try { const r = await fetch(url, Object.assign({ signal: ctl.signal }, opt)); return await r.json(); }
+  finally { clearTimeout(t); }
+}
+/** 資格情報が有効かサーバに聞く（正解はサーバだけが持つ）。'ok' / 'auth' / 'net' */
+async function staffCheck(key) {
+  try {
+    const j = await fetchJSON(GAS_URL + '?action=staffCheck&key=' + encodeURIComponent(key) + '&t=' + Date.now());
+    return j && j.ok ? 'ok' : (j && j.error === 'auth' ? 'auth' : 'net');
+  } catch (e) { return 'net'; }
+}
+
+function showMenu(note) {
+  stopScan();
+  $('#loginView').hidden = true; $('#menuView').hidden = false;
+  $('#lead').textContent = note || '使う画面を選んでください';
+}
+function showLogin(msg) {
+  $('#menuView').hidden = true; $('#loginView').hidden = false;
+  $('#lead').textContent = 'ログインしてください';
+  $('#skey').value = ''; $('#skeyMsg').textContent = ''; setMsg('#qrMsg', msg || '', false);
+}
+function setMsg(sel, text, info) { const el = $(sel); el.textContent = text; el.classList.toggle('info', !!info); }
+
+// ---------- QRログイン ----------
+let scanner = null, scanning = false, busy = false;
+async function startScan() {
+  if (scanning) return;
+  if (!GAS_URL) { setMsg('#qrMsg', 'index.html 内の GAS_URL を設定してください'); return; }
+  if (typeof Html5Qrcode === 'undefined') { setMsg('#qrMsg', '読み取り機能を読み込めませんでした。スタッフキーでログインしてください'); return; }
+  setMsg('#qrMsg', 'カメラを起動しています…', true);
+  $('#reader').hidden = false;
+  try {
+    scanner = scanner || new Html5Qrcode('reader', { verbose: false });
+    await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: (w, h) => { const s = Math.floor(Math.min(w, h) * 0.75); return { width: s, height: s }; } },
+      text => onScan(text), () => {});
+    scanning = true;
+    $('#qrBtn').hidden = true; $('#qrStop').hidden = false;
+    setMsg('#qrMsg', 'QRコードを枠に合わせてください', true);
+  } catch (e) {
+    scanning = false; $('#reader').hidden = true;
+    setMsg('#qrMsg', 'カメラを使えませんでした（許可されていないか、起動に失敗）。下のスタッフキーでログインしてください');
+  }
+}
+async function stopScan() {
+  const was = scanning; scanning = false;
+  $('#reader').hidden = true; $('#qrBtn').hidden = false; $('#qrStop').hidden = true;
+  if (was && scanner) { try { await scanner.stop(); scanner.clear(); } catch (e) {} }
+}
+async function onScan(text) {
+  if (busy) return;
+  busy = true;
+  await stopScan();                                  // 読み取れたらカメラを止める
+  const code = String(text || '').trim();
+  setMsg('#qrMsg', '確認中…', true);
+  try {
+    if (!/^[A-Za-z0-9]{8,64}$/.test(code)) throw new Error('auth');      // 形だけ確認（照合はサーバ）
+    const j = await fetchJSON(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'qrAuth', code }) });
+    if (j && j.ok && typeof j.session === 'string' && j.session) { saveCred(j.session); showMenu(); }
+    else setMsg('#qrMsg', j && j.error === 'auth' ? 'コードが違うか、期限切れです' : '確認できませんでした。もう一度読み取ってください');
+  } catch (e) {
+    setMsg('#qrMsg', e.message === 'auth' ? 'コードが違うか、期限切れです' : '通信できませんでした。電波を確認してください');
+  }
+  busy = false;
+}
+
+// ---------- スタッフキー（予備） ----------
+async function loginKey() {
+  const v = $('#skey').value.trim();
+  if (!/^[0-9]{6}$/.test(v)) { setMsg('#skeyMsg', '6桁の数字を入力してください'); return; }
+  if (!GAS_URL) { setMsg('#skeyMsg', 'index.html 内の GAS_URL を設定してください'); return; }
+  $('#skeyBtn').disabled = true; setMsg('#skeyMsg', '確認中…', true);
+  const r = await staffCheck(v);
+  $('#skeyBtn').disabled = false;
+  if (r === 'ok') { saveCred(v); showMenu(); }
+  else { $('#skey').value = ''; setMsg('#skeyMsg', r === 'auth' ? 'キーが違います' : '通信できませんでした。電波を確認してください'); }
+}
+
+$('#qrBtn').addEventListener('click', startScan);
+$('#qrStop').addEventListener('click', () => { stopScan(); setMsg('#qrMsg', '', false); });
+$('#skeyBtn').addEventListener('click', loginKey);
+$('#skey').addEventListener('keydown', e => { if (e.key === 'Enter') loginKey(); });
+$('#skey').addEventListener('input', e => { e.target.value = e.target.value.replace(/[^0-9]/g, '').slice(0, 6); });
+$('#lockBtn').addEventListener('click', () => { clearCred(); showLogin(''); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopScan(); });
+
+// ---------- 起動 ----------
+(async function boot() {
+  const key = lsGet(SK.key), day = lsGet(SK.day);
+  if (!key || day !== todayStr()) { clearCred(); showLogin(''); return; }
+  const r = await staffCheck(key);
+  if (r === 'auth') { clearCred(); showLogin('ログインの有効期限が切れました'); }
+  else showMenu(r === 'net' ? '通信できません。電波を確認してください' : '');   // 通信エラーでは資格情報を消さない
+})();
+</script>
 </body>
 </html>
