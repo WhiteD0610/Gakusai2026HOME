@@ -216,7 +216,7 @@ body {
         </div>
         <div style="display:flex;align-items:center;gap:2px">
           <div class="status" id="status"><i></i><span>確認中</span></div>
-          <button class="bell-btn" id="soundBtn" aria-pressed="false" aria-label="準備完了の通知音">
+          <button class="bell-btn" id="soundBtn" aria-pressed="false" aria-label="通知音" style="display:none">
             <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10a5 5 0 0 1 10 0v5l1.5 2.5h-13L7 15z"/><path d="M10.2 20.5a2 2 0 0 0 3.6 0"/></svg>
           </button>
         </div>
@@ -289,6 +289,7 @@ let cart = {}, cartLog = [];
 let pane = 'sale';
 let online = null;
 let sound = localStorage.getItem(K.sound) === '1';
+let surplus = {};                  // 余剰在庫（味ごとの本数）。お渡し完了時の充当に使う
 
 const ticketMax = () => (cfg && cfg.ticketMax) || 30;
 const wrap = n => (n - 1) % ticketMax() + 1;
@@ -345,9 +346,28 @@ function send() {
   render();
   toast('No.' + no + ' を送信（' + qty + '個 ' + pcs + '本 ' + yen(amount) + '）', '取り消す', () => voidOrder(o.id));
 }
+/** 余剰在庫をこの注文に何本充当するか（キッチン画面の「在庫○本」と同じ計算：整理券の小さい順） */
+function useFor(id) {
+  const rem = Object.assign({}, surplus), by = {};
+  orders.filter(x => x.status === 'waiting').sort((a, b) => a.ticket - b.ticket || a.ts - b.ts).forEach(x => {
+    x.items.forEach(it => {
+      const f = flavorOf(it.productId);
+      const n = Math.min(rem[f] || 0, pcsOf(it.productId) * it.qty);
+      if (n > 0) { rem[f] -= n; if (x.id === id) by[f] = (by[f] || 0) + n; }
+    });
+  });
+  return Object.keys(by).map(f => ({ flavor: f, pieces: by[f] }));
+}
 function done(id) {
   const o = orders.find(x => x.id === id);
-  if (!o || o.status !== 'ready') return;
+  if (!o || (o.status !== 'waiting' && o.status !== 'ready')) return;
+  if (o.status === 'waiting') {                     // 充当した余剰在庫を消費する（以前はキッチンの「調理完了」で行っていた）
+    const use = useFor(id);
+    if (use.length) {
+      use.forEach(u => { surplus[u.flavor] = Math.max(0, (surplus[u.flavor] || 0) - u.pieces); });
+      enqueue({ type: 'ready', id, ts: Date.now(), use });
+    }
+  }
   o.status = 'done'; o.doneAt = Date.now(); store(K.orders, orders);
   enqueue({ type: 'done', id, ts: o.doneAt });
   render();
@@ -421,9 +441,7 @@ function render() {
     : 'お渡し待ち ' + w.length + '件';
   const segs = document.querySelectorAll('#paneSeg button');
   segs.forEach(b => b.setAttribute('aria-selected', b.dataset.pane === pane));
-  const readyCount = w.filter(o => o.status === 'ready').length;
-  segs[1].innerHTML = 'お渡し待ち' + (w.length ? '（' + w.length + '）' : '')
-    + (readyCount ? '<span class="badge">' + readyCount + '</span>' : '');
+  segs[1].innerHTML = 'お渡し待ち' + (w.length ? '（' + w.length + '）' : '');
   $('#paneSale').hidden = pane !== 'sale';
   $('#paneWait').hidden = pane !== 'wait';
   $('#bottomSale').hidden = pane !== 'sale';
@@ -464,16 +482,14 @@ function render() {
 
   $('#waitEmpty').hidden = !!w.length;
   if (!hold) $('#waitlist').innerHTML = w.map((o, i) => {
-    const rdy = o.status === 'ready';
     return `
-    <div class="wcard ${rdy ? 'ready' : ''} ${!rdy && i === 0 ? 'next' : ''}">
+    <div class="wcard ${i === 0 ? 'next' : ''}">
       <div class="wno">${o.ticket}<small>整理券</small></div>
       <div class="witems">
-        ${rdy ? '<div class="wready">準備完了</div>' : '<div class="wcooking">調理中</div>'}
         ${esc(itemsText(o))}<div class="sub">${hm(o.ts)} 受付 ・ ${o.items.reduce((a, x) => a + x.qty, 0)}個${orderPcs(o) ? '（' + orderPcs(o) + '本）' : ''}</div>
       </div>
       <div class="wact">
-        <button class="btn btn-green sm" data-done="${esc(o.id)}" ${rdy ? '' : 'disabled'}>お渡し完了</button>
+        <button class="btn btn-green sm" data-done="${esc(o.id)}">お渡し完了</button>
         <button class="hold" data-hold="${esc(o.id)}"><span class="fill"></span><span class="lbl">長押しで取消</span></button>
       </div>
     </div>`;
@@ -505,14 +521,13 @@ function renderSheet() {
     const o = orders.find(x => x.id === targetId);
     if (!o) { openSheet(false); return; }
     if (rstep === 'other' && $('#rName')) return;        // 入力中は作り直さない
-    const cooked = o.status === 'ready';
     $('#sheetTitle').textContent = 'No.' + o.ticket + ' を取消';
     if (rstep === 'cat') {
       $('#sheetBody').innerHTML =
-        `<p class="cap-line" style="margin:0 4px 12px">${esc(itemsText(o))}${cooked ? '（調理済み）' : '（調理前）'}・取消理由を選んでください。</p>
+        `<p class="cap-line" style="margin:0 4px 12px">${esc(itemsText(o))}・取消理由を選んでください。</p>
          <div class="list">
-           <button class="row pick" data-cat="商品不良"><span class="n">商品不良</span><span class="sub2">${cooked ? '廃棄する' : '材料は戻ります'}</span></button>
-           <button class="row pick" data-cat="お客様都合キャンセル"><span class="n">お客様都合キャンセル</span><span class="sub2">${cooked ? '余剰在庫に戻す' : '材料は戻ります'}</span></button>
+           <button class="row pick" data-cat="商品不良"><span class="n">商品不良</span><span class="sub2">廃棄する</span></button>
+           <button class="row pick" data-cat="お客様都合キャンセル"><span class="n">お客様都合キャンセル</span><span class="sub2">調理状況を選ぶ</span></button>
            <button class="row pick" data-cat="その他"><span class="n">その他</span><span class="sub2">担当者名と詳細を入力</span></button>
          </div>`;
     } else if (rstep === 'other') {
@@ -525,8 +540,9 @@ function renderSheet() {
       $('#sheetBody').innerHTML =
         `<p class="cap-line" style="margin:0 4px 12px">${esc(itemsText(o))} をどうしますか。</p>
          <div class="list">
-           <button class="row pick" data-disp="stock"><span class="n">余剰在庫に戻す</span><span class="sub2">他の注文に充当</span></button>
-           <button class="row pick" data-disp="waste"><span class="n">廃棄する</span><span class="sub2">在庫から減らす</span></button>
+           <button class="row pick" data-disp="none"><span class="n">まだ作っていない</span><span class="sub2">材料は戻ります</span></button>
+           <button class="row pick" data-disp="stock"><span class="n">余剰在庫に戻す</span><span class="sub2">作った分を他の注文に充当</span></button>
+           <button class="row pick" data-disp="waste"><span class="n">廃棄する</span><span class="sub2">作った分を捨てる</span></button>
          </div>`;
     }
     return;
@@ -545,7 +561,7 @@ function renderSheet() {
       '<p class="cap-line">次の注文に付ける番号です。全端末で共有され、1〜' + n + 'を順に使って' + n + 'の次は1に戻ります。' +
       '紙の整理券をなくした時は番号を飛ばし、テスト後の本番開始時は1に戻してください。</p>';
   } else {
-    const st = { waiting: '調理中', ready: '準備完了', done: 'お渡し済', void: '取消' };
+    const st = { waiting: 'お渡し待ち', ready: 'お渡し待ち', done: 'お渡し済', void: '取消' };
     const today = orders.filter(o => dayKey(o.ts) === dayKey(Date.now())).slice().reverse();
     $('#sheetTitle').textContent = '本日の注文';
     $('#sheetBody').innerHTML = today.length
@@ -652,6 +668,7 @@ async function flush() {
     }
     if (ch) store(K.orders, orders);
     if (j.stock) stock = j.stock;
+    if (j.surplus && !queue.length) surplus = j.surplus;
     if (!queue.length && j.nextTicket) { ticket = j.nextTicket; store(K.ticket, ticket); }
     online = true;
     render();
@@ -697,6 +714,7 @@ async function fetchOrders(full) {
       stock = j.stock; changed = true;
     }
     const pending = new Set(queue.map(e => e.id));
+    if (j.surplus && !queue.length) surplus = j.surplus;   // 未送信の操作がある間は手元の値を優先
     const srv = {}, tkt = {};
     j.orders.forEach(o => { srv[o[0]] = o[4]; tkt[o[0]] = o[1]; });
     let becameReady = 0;
@@ -727,7 +745,6 @@ async function fetchOrders(full) {
     });
     if (!queue.length && j.nextTicket && j.nextTicket !== ticket) { ticket = j.nextTicket; store(K.ticket, ticket); changed = true; }
     if (changed) { store(K.orders, orders); render(); }
-    if (becameReady) alertReady(becameReady);
   } catch (e) {
     if (!queue.length) online = false;
   } finally {
@@ -770,30 +787,24 @@ $('#waitlist').addEventListener('pointerdown', e => {
 ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
   document.addEventListener(ev, () => { if (hold) holdCancel(); }));
 $('#sheetBody').addEventListener('click', e => {
-  const o = orders.find(x => x.id === targetId);
-  const cooked = o && o.status === 'ready';
   const cat = e.target.closest('[data-cat]');
   if (cat) {
     rdata.cat = cat.dataset.cat;
     if (rdata.cat === 'その他') { rstep = 'other'; renderSheet(); return; }
-    const disp = !cooked ? 'none' : (rdata.cat === '商品不良' ? 'waste' : 'stock');
-    const id = targetId; openSheet(false); voidOrder(id, rdata.cat, disp);
+    if (rdata.cat === '商品不良') { const id = targetId; openSheet(false); voidOrder(id, rdata.cat, 'waste'); return; }
+    rstep = 'disp'; renderSheet();                    // お客様都合：作ったかどうかを選ぶ
     return;
   }
   if (e.target.closest('#rNext')) {
     rdata.name = ($('#rName').value || '').trim();
     rdata.detail = ($('#rDetail').value || '').trim();
     if (!rdata.name || !rdata.detail) { toast('名前と詳細の両方を入力してください'); return; }
-    if (!cooked) {                                    // 調理前は在庫に影響しない
-      const id = targetId; const r = 'その他／' + rdata.name + '／' + rdata.detail;
-      openSheet(false); voidOrder(id, r, 'none'); return;
-    }
     rstep = 'disp'; renderSheet(); return;
   }
   const dp = e.target.closest('[data-disp]');
   if (dp) {
     const id = targetId;
-    const r = 'その他／' + rdata.name + '／' + rdata.detail;
+    const r = rdata.cat === 'その他' ? 'その他／' + rdata.name + '／' + rdata.detail : rdata.cat;
     openSheet(false); voidOrder(id, r, dp.dataset.disp);
     return;
   }

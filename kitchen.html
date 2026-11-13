@@ -158,7 +158,7 @@ body { margin: 0; font-family: var(--font); font-size: 17px; line-height: 1.47; 
   <div class="totals" id="totals"></div>
   <div class="totals" id="surplus"></div>
   <div class="cards" id="cards"></div>
-  <div class="sec-head" id="readyHead" hidden>準備完了（お渡し待ち）</div>
+  <div class="sec-head" id="readyHead" hidden>受付で「戻す」にした注文（調理済み）</div>
   <div class="cards" id="readyCards"></div>
   <div class="empty" id="empty" hidden>
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,13 9,18 20,6"/></svg>
@@ -326,7 +326,7 @@ function render(freshIds) {
   const need = (o, i) => Math.max(0, pcsOf(i.productId) * i.qty - ((alloc[o.id] || {})[i.productId] || 0));
   const total = cooking.reduce((a, o) => a + o.items.reduce((b, i) => b + i.qty, 0), 0);
   const totalPcs = cooking.reduce((a, o) => a + o.items.reduce((b, i) => b + need(o, i), 0), 0);
-  $('#head').textContent = '調理待ち ' + cooking.length + '件';
+  $('#head').textContent = '残りオーダー ' + orders.length + '件';
   const wb = $('#warnBar');
   if (stock && stock.warn) {
     wb.hidden = false;
@@ -367,7 +367,7 @@ function card(o, oldest, fresh, ready, alloc) {
       <div class="no">${o.ticket}<small>整理券</small></div>
       <div class="make"><b>${make}</b>本</div>
     </div>
-    <div class="cmeta"><span>${hm(o.ts)} 受付</span>${ready ? '<span class="rtag">準備完了</span>' : '<span data-ts="' + o.ts + '" class="age"></span>'}</div>
+    <div class="cmeta"><span>${hm(o.ts)} 受付</span>${ready ? '<span class="rtag">調理済み</span>' : '<span data-ts="' + o.ts + '" class="age"></span>'}</div>
     <div class="items">${o.items.map(i => {
       const full = pcsOf(i.productId) * i.qty;
       const a = Math.min(full, alloc[i.productId] || 0);
@@ -375,9 +375,6 @@ function card(o, oldest, fresh, ready, alloc) {
         <span class="nm" style="flex:1;min-width:0">${esc(nameOf(i.productId, i.name))}<span class="sub2">${i.qty}×${pcsOf(i.productId)}本</span>${a ? `<span class="stock">在庫${a}本</span>` : ''}</span>
         <span class="qt"><b>${full - a}</b>本</span></div>`;
     }).join('')}</div>
-    ${ready
-      ? `<button class="btn btn-gray sm block" data-unready="${esc(o.id)}">調理中に戻す</button>`
-      : `<button class="btn btn-green block" data-ready="${esc(o.id)}">調理完了</button>`}
   </div>`;
 }
 
@@ -427,8 +424,7 @@ function flashTitle(n) {
 
 // ---------- イベント ----------
 document.addEventListener('click', e => {
-  const r = e.target.closest('[data-ready]'); if (r) { mark(r.dataset.ready, true); return; }
-  const u = e.target.closest('[data-unready]'); if (u) { mark(u.dataset.unready, false); return; }
+  // キッチンは表示のみ（お渡し完了は受付で押す）
 });
 $('#soundBtn').addEventListener('click', () => {
   sound = !sound; localStorage.setItem(K.sound, sound ? '1' : '0');
