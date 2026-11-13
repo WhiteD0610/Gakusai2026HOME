@@ -297,6 +297,14 @@ const waiting = () => orders.filter(o => o.status === 'waiting' || o.status === 
 const cartQty = () => Object.values(cart).reduce((a, n) => a + n, 0);
 const priceOf = pid => { const p = (cfg && cfg.products || []).find(x => x.id === pid); return p ? Number(p.price) || 0 : 0; };
 const cartAmt = () => Object.keys(cart).reduce((a, pid) => a + priceOf(pid) * cart[pid], 0);
+/** セット割引：管理アプリの設定がONのとき、every個ごとに off 円引き（repeat=false なら1注文1回） */
+function discountOf(qty, sum) {
+  const d = cfg && cfg.discount;
+  if (!d || d.enabled !== true) return 0;
+  const every = Math.max(1, Math.round(Number(d.every) || 0)), off = Math.max(0, Math.round(Number(d.off) || 0));
+  if (qty < every) return 0;
+  return Math.min(sum, (d.repeat === false ? 1 : Math.floor(qty / every)) * off);
+}
 const pcsOf = pid => { const p = (cfg && cfg.products || []).find(x => x.id === pid); return p ? Number(p.pcs) || 0 : 0; };
 const cartPcs = () => Object.keys(cart).reduce((a, pid) => a + pcsOf(pid) * cart[pid], 0);
 const orderPcs = o => o.items.reduce((a, i) => a + pcsOf(i.productId) * i.qty, 0);
@@ -334,17 +342,19 @@ function send() {
     const p = (cfg.products || []).find(x => x.id === pid) || { name: '不明', price: 0 };
     return { productId: pid, name: p.name, price: Number(p.price) || 0, qty: cart[pid] };
   });
-  const amount = items.reduce((a, i) => a + i.price * i.qty, 0);
+  const sum = items.reduce((a, i) => a + i.price * i.qty, 0);
+  const discount = discountOf(qty, sum);
+  const amount = sum - discount;
   const pcs = items.reduce((a, i) => a + pcsOf(i.productId) * i.qty, 0);
-  const o = { id: uid(), ticket, ts: Date.now(), items, status: 'waiting' };
+  const o = { id: uid(), ticket, ts: Date.now(), items, status: 'waiting', discount };
   orders.push(o); store(K.orders, orders);
-  enqueue({ type: 'order', id: o.id, ticket: o.ticket, ts: o.ts, items });
+  enqueue({ type: 'order', id: o.id, ticket: o.ticket, ts: o.ts, items, discount });
   const no = ticket;
   ticket = ticket % ticketMax() + 1; store(K.ticket, ticket);
   cart = {}; cartLog = [];
   if (navigator.vibrate) navigator.vibrate([16, 40, 16]);
   render();
-  toast('No.' + no + ' を送信（' + qty + '個 ' + pcs + '本 ' + yen(amount) + '）', '取り消す', () => voidOrder(o.id));
+  toast('No.' + no + ' を送信（' + qty + '個 ' + pcs + '本 ' + yen(amount) + (discount ? '・セット割 −' + yen(discount) : '') + '）', '取り消す', () => voidOrder(o.id));
 }
 /** 余剰在庫をこの注文に何本充当するか（キッチン画面の「在庫○本」と同じ計算：整理券の小さい順） */
 function useFor(id) {
@@ -474,8 +484,9 @@ function render() {
     }).join('');
   }
   const q = cartQty();
-  $('#cartQty').textContent = q + '個' + (cartPcs() ? ' ・ ' + cartPcs() + '本' : '');
-  $('#cartAmt').textContent = yen(cartAmt());
+  const dsc = discountOf(q, cartAmt());
+  $('#cartQty').textContent = q + '個' + (cartPcs() ? ' ・ ' + cartPcs() + '本' : '') + (dsc ? ' ・ セット割 −' + yen(dsc) : '');
+  $('#cartAmt').textContent = yen(cartAmt() - dsc);
   $('#sendBtn').disabled = !q;
   $('#sendBtn').textContent = q ? 'No.' + ticket + ' 送信' : '送信';
   $('#undoBtn').disabled = !cartLog.length;
